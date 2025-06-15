@@ -34,11 +34,28 @@ This project exists to solve these specific problems:
 
 To achieve its goal, the application employs a sophisticated multi-agent backend architecture. Instead of a single, monolithic process, the task is broken down and handled by a sequence of three specialized agents, each with a distinct responsibility.
 
-### **Agent 1: The Extraction Agent**
+### Architecture Diagram
+
+```mermaid
+graph TD
+    A[Incoming Email] -->|Unstructured Text| B(Agent 1: Extractor);
+    B -->|Raw JSON Guess| C(Agent 2: DB Validator);
+    C <-->|SQL Query / Results| D[(Supabase DB)];
+    C -->|Fact-Checked Order JSON| E(Agent 3: Customer Service Agent);
+    E -->|Generates Response| F{Final Output};
+    F --> G[Structured JSON for UI];
+    F --> H[Human-Readable Email];
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style D fill:#cde,stroke:#333,stroke-width:2px
+    style F fill:#bfa,stroke:#333,stroke-width:2px
+```
+
+### Agent 1: The Extraction Agent
 
 This is the first point of contact with the raw email content. Its sole purpose is to read the unstructured text and perform an initial interpretation. It identifies potential product codes (SKUs), requested quantities, and any other customer notes or questions. It makes an educated "guess" about the customer's intent and structures this raw data for the next agent in the pipeline.
 
-### **Agent 2: The Database Validation Agent**
+### Agent 2: The Database Validation Agent
 
 This agent acts as the system's connection to reality. It is a purely logical, non-AI component that takes the raw extracted data from Agent 1 and rigorously validates it against the live Supabase database. For every item requested, it performs a series of checks:
 
@@ -48,6 +65,6 @@ This agent acts as the system's connection to reality. It is a purely logical, n
 
 This agent sorts the request into two categories: items that are fully validated and ready for processing, and items that have issues. It is the critical bridge between the AI's interpretation and the factual state of the business inventory.
 
-### **Agent 3: The Customer Service Agent**
+### Agent 3: The Customer Service Agent
 
 The final agent in the pipeline receives the structured, fact-checked order data from the Validator. Its role is that of a professional communicator. Using this structured data as context, it generates a helpful, polite, and comprehensive email response. The email confirms the validated parts of the order and clearly explains any issues found (e.g., an item being out of stock or an invalid product code), presenting the system-generated suggestions to resolve them. The final output is a ready-to-send email that is both empathetic and factually accurate.
