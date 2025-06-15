@@ -58,12 +58,12 @@ Alex
 
   return (
     <main className="flex min-h-screen flex-col items-center p-12 bg-gray-50">
-      <div className="z-10 w-full max-w-4xl items-center justify-between font-mono text-sm">
+      <div className="z-10 w-full max-w-6xl items-center justify-between font-mono text-sm">
         <h1 className="text-4xl font-bold text-center text-gray-800 mb-2">
           Intelligent Order Processor
         </h1>
         <p className="text-center text-gray-500 mb-8">
-          Paste an order email below to extract and validate the details.
+          Three-Agent Pipeline: Extract, Validate, and Respond to Order Emails
         </p>
 
         <div className="w-full bg-white p-6 rounded-lg shadow-md">
@@ -107,73 +107,115 @@ Alex
         )}
 
         {orderData && (
-          <div className="mt-6 w-full bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">
-              Extraction Result
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* User Friendly View */}
-              <div>
-                <h3 className="text-lg font-semibold border-b pb-2 mb-3">
-                  Order Summary
-                </h3>
-                {orderData.validated_items.length > 0 && (
-                  <div className="mb-4">
-                    <h4 className="font-bold text-green-700">
-                      Validated Items
-                    </h4>
-                    <ul className="list-disc list-inside text-gray-700">
-                      {orderData.validated_items.map((item) => (
-                        <li key={item.sku}>
-                          {item.quantity} x {item.name} ({item.sku})
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {orderData.issues.length > 0 && (
-                  <div className="mb-4">
-                    <h4 className="font-bold text-yellow-700">
-                      Action Required
-                    </h4>
-                    <ul className="list-disc list-inside text-gray-700">
-                      {orderData.issues.map((issue, index) => (
-                        <li key={index} className="mt-2">
-                          <p>
-                            <span className="font-semibold">Item:</span>{" "}
-                            {issue.item_mentioned}
-                          </p>
-                          <p>
-                            <span className="font-semibold">Issue:</span>{" "}
-                            {issue.message}
-                          </p>
-                          <p className="text-blue-600">
-                            <span className="font-semibold">Suggestion:</span>{" "}
-                            {issue.suggestion}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                <p>
-                  <span className="font-semibold">Delivery:</span>{" "}
-                  {orderData.delivery_preference}
-                </p>
-                <p>
-                  <span className="font-semibold">Notes:</span>{" "}
-                  {orderData.customer_notes}
-                </p>
+          <div className="mt-6 w-full space-y-6">
+            {/* AI Generated Email Response */}
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-2xl font-bold text-gray-800 mb-4">
+                AI Generated Response
+              </h2>
+              <div className="bg-gray-50 p-4 rounded-md border-l-4 border-blue-500">
+                <div className="whitespace-pre-wrap text-gray-800 font-medium">
+                  {orderData.email_response}
+                </div>
               </div>
-              {/* Raw JSON View */}
-              <div>
-                <h3 className="text-lg font-semibold border-b pb-2 mb-3">
-                  Raw JSON Output
-                </h3>
-                <pre className="bg-gray-900 text-white p-4 rounded-md text-xs overflow-x-auto">
-                  {JSON.stringify(orderData, null, 2)}
-                </pre>
+            </div>
+
+            {/* Order Summary */}
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-2xl font-bold text-gray-800 mb-4">
+                Order Summary
+              </h2>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Validated Items */}
+                <div>
+                  <h3 className="text-lg font-semibold border-b pb-2 mb-3 text-green-700">
+                    ✅ Validated Items
+                  </h3>
+                  {orderData.order_summary.validated_items.length > 0 ? (
+                    <div className="space-y-2">
+                      {orderData.order_summary.validated_items.map((item, index) => (
+                        <div key={index} className="bg-green-50 p-3 rounded-md border border-green-200">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <span className="font-semibold text-green-800">
+                                {item.quantity} x {item.name}
+                              </span>
+                              <div className="text-sm text-gray-600">SKU: {item.sku}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-semibold text-green-800">
+                                ${(item.price * item.quantity).toFixed(2)}
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                ${item.price.toFixed(2)} each
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 italic">No items were successfully validated.</p>
+                  )}
+                </div>
+
+                {/* Issues */}
+                <div>
+                  <h3 className="text-lg font-semibold border-b pb-2 mb-3 text-yellow-700">
+                    ⚠️ Issues Found
+                  </h3>
+                  {orderData.order_summary.issues.length > 0 ? (
+                    <div className="space-y-3">
+                      {orderData.order_summary.issues.map((issue, index) => (
+                        <div key={index} className="bg-yellow-50 p-3 rounded-md border border-yellow-200">
+                          <div className="mb-2">
+                            <span className="font-semibold text-yellow-800">
+                              {issue.item_mentioned}
+                            </span>
+                            <span className="ml-2 px-2 py-1 bg-yellow-200 text-yellow-800 text-xs rounded-full">
+                              {issue.issue_type}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-700 mb-2">{issue.message}</p>
+                          <p className="text-sm text-blue-600 font-medium">
+                            💡 {issue.suggestion}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 italic">No issues found.</p>
+                  )}
+                </div>
               </div>
+
+              {/* Additional Information */}
+              <div className="mt-6 pt-4 border-t border-gray-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <span className="font-semibold text-gray-700">Delivery Preference:</span>
+                    <p className="text-gray-600 mt-1">
+                      {orderData.order_summary.delivery_preference || "Not specified"}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-gray-700">Customer Notes:</span>
+                    <p className="text-gray-600 mt-1">
+                      {orderData.order_summary.customer_notes || "No additional notes"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Raw JSON View */}
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h3 className="text-lg font-semibold border-b pb-2 mb-3">
+                Raw JSON Output
+              </h3>
+              <pre className="bg-gray-900 text-white p-4 rounded-md text-xs overflow-x-auto">
+                {JSON.stringify(orderData, null, 2)}
+              </pre>
             </div>
           </div>
         )}

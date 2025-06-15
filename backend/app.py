@@ -4,7 +4,10 @@ import google.generativeai as genai
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-from database import get_all_products_for_prompt, get_product_by_sku
+from database import initialize_connection_pool, close_connection_pool
+from agents.extraction_agent import ExtractionAgent
+from agents.validation_agent import ValidationAgent
+from agents.response_agent import ResponseAgent
 
 # Load environment variables from .env file
 load_dotenv()
@@ -14,131 +17,45 @@ app = Flask(__name__)
 # Enable Cross-Origin Resource Sharing (CORS) for our frontend
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
 
-# --- Configure Gemini API ---
-try:
-    api_key = os.environ["GEMINI_API_KEY"]
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
-except KeyError:
-    print("ERROR: GEMINI_API_KEY not found in .env file.")
-    exit()
-except Exception as e:
-    print(f"ERROR configuring Gemini API: {e}")
-    exit()
+# Global variables for agents and model
+model = None
+extraction_agent = None
+validation_agent = None
+response_agent = None
 
-# --- Prompt Engineering ---
-def create_prompt(email_content, catalog):
-    # Convert the catalog to a string for the prompt
-    catalog_str = json.dumps(catalog, indent=2)
-
-    return f"""
-    You are an expert order processing assistant. Your task is to extract order details from an unstructured email, validate them against the provided product catalog, and generate a structured JSON output.
-
-    **Product Catalog for Validation:**
-    ```json
-    {catalog_str}
-    ```
-
-    **Email Content:**
-    ---
-    {email_content}
-    ---
-
-    **Instructions:**
-    1.  **Extract Items:** Identify all requested Stock Keeping Units (SKUs) and their quantities from the email.
-    2.  **Extract Delivery Info:** Identify any notes about delivery preferences or deadlines.
-    3.  **Extract Customer Notes:** Capture any other relevant customer comments or questions.
-    4.  **Output JSON:** Structure your findings into a single JSON object. Do not add any text before or after the JSON object.
-    5.  **Handle Issues:**
-        *   If a SKU from the email does not exist in the catalog, add it to an `issues` array in the JSON. In the `suggestion` field for that issue, suggest a valid SKU from the catalog that seems like a close match (e.g., different size or color of the same item type).
-        *   If the requested quantity for a valid SKU is below its `min_order_qty`, add it to the `issues` array. In the `suggestion`, state the minimum required quantity.
-        *   If the requested quantity for a valid SKU exceeds the `inventory`, add it to the `issues` array. In the `suggestion`, state the available stock.
-        *   If an item is valid (exists, meets MOQ, in stock), add it to the `validated_items` array.
-
-    **JSON Output Format:**
-    ```json
-    {{
-      "validated_items": [
-        {{
-          "sku": "string",
-          "quantity": "integer",
-          "name": "string"
-        }}
-      ],
-      "issues": [
-        {{
-          "item_mentioned": "string (what the user wrote)",
-          "issue_type": "SKU_NOT_FOUND | MOQ_NOT_MET | INSUFFICIENT_INVENTORY",
-          "message": "string (a clear description of the problem)",
-          "suggestion": "string (a helpful suggestion to resolve the issue)"
-        }}
-      ],
-      "delivery_preference": "string",
-      "customer_notes": "string"
-    }}
-    ```
+def initialize_agents():
     """
-
-def perform_server_side_validation(validated_items):
+    Initialize all agents and the Gemini model.
     """
-    Performs definitive server-side validation of items returned by the AI.
-    Returns a tuple of (final_validated_items, additional_issues)
-    """
-    final_validated_items = []
-    additional_issues = []
+    global model, extraction_agent, validation_agent, response_agent
     
-    for item in validated_items:
-        try:
-            # Fetch latest product data from database
-            product = get_product_by_sku(item['sku'])
-            
-            if not product:
-                # Product no longer exists
-                additional_issues.append({
-                    "item_mentioned": item['sku'],
-                    "issue_type": "SKU_NOT_FOUND_ON_CONFIRM",
-                    "message": f"Product {item['sku']} no longer exists in our catalog",
-                    "suggestion": "Please check the product catalog for available items"
-                })
-                continue
-            
-            # Check inventory
-            if item['quantity'] > product['inventory']:
-                additional_issues.append({
-                    "item_mentioned": item['sku'],
-                    "issue_type": "INSUFFICIENT_INVENTORY_ON_CONFIRM",
-                    "message": f"Insufficient inventory for {item['sku']}. Requested: {item['quantity']}, Available: {product['inventory']}",
-                    "suggestion": f"Maximum available quantity: {product['inventory']}"
-                })
-                continue
-            
-            # Check minimum order quantity
-            if item['quantity'] < product['min_order_qty']:
-                additional_issues.append({
-                    "item_mentioned": item['sku'],
-                    "issue_type": "MOQ_NOT_MET_ON_CONFIRM",
-                    "message": f"Minimum order quantity not met for {item['sku']}. Requested: {item['quantity']}, Required: {product['min_order_qty']}",
-                    "suggestion": f"Minimum order quantity: {product['min_order_qty']}"
-                })
-                continue
-            
-            # Item passes all validations
-            final_validated_items.append(item)
-            
-        except Exception as e:
-            # Database error during validation
-            additional_issues.append({
-                "item_mentioned": item['sku'],
-                "issue_type": "VALIDATION_ERROR",
-                "message": f"Error validating {item['sku']}: {str(e)}",
-                "suggestion": "Please try again or contact support"
-            })
-    
-    return final_validated_items, additional_issues
+    try:
+        # Configure Gemini API
+        api_key = os.environ["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        
+        # Initialize agents
+        extraction_agent = ExtractionAgent(model)
+        validation_agent = ValidationAgent()
+        response_agent = ResponseAgent(model)
+        
+        print("All agents initialized successfully")
+        
+    except KeyError:
+        print("ERROR: GEMINI_API_KEY not found in .env file.")
+        exit()
+    except Exception as e:
+        print(f"ERROR initializing agents: {e}")
+        exit()
 
 # --- API Endpoint ---
 @app.route("/api/extract-order", methods=["POST"])
 def extract_order_details():
+    """
+    Main API endpoint that orchestrates the three-agent pipeline:
+    Email Text -> [Agent 1: Extractor] -> Raw JSON -> [Agent 2: DB Validator] -> Validated Order -> [Agent 3: Response Agent] -> Final Response
+    """
     try:
         data = request.get_json()
         
@@ -147,27 +64,23 @@ def extract_order_details():
         
         email_content = data["email_content"]
         
-        # Fetch live product catalog from database
-        product_catalog = get_all_products_for_prompt()
+        # Step 1: Agent 1 - Extract raw order details
+        print("Step 1: Agent 1 (Extractor) processing...")
+        raw_extraction_data = extraction_agent.extract_details(email_content)
+        print(f"Agent 1 completed. Extracted {len(raw_extraction_data.get('items', []))} items")
         
-        prompt = create_prompt(email_content, product_catalog)
+        # Step 2: Agent 2 - Database validation
+        print("Step 2: Agent 2 (DB Validator) processing...")
+        validated_order = validation_agent.validate_order(raw_extraction_data)
+        print(f"Agent 2 completed. Validated: {len(validated_order.get('validated_items', []))} items, Issues: {len(validated_order.get('issues', []))}")
         
-        response = model.generate_content(prompt)
+        # Step 3: Agent 3 - Generate customer response
+        print("Step 3: Agent 3 (Response Agent) processing...")
+        final_response = response_agent.generate_customer_response(validated_order)
+        print("Agent 3 completed. Response generated.")
         
-        # Clean up the response to get pure JSON
-        cleaned_response = response.text.strip().replace("```json", "").replace("```", "")
-        order_data = json.loads(cleaned_response)
-        
-        # Perform server-side validation
-        final_validated_items, additional_issues = perform_server_side_validation(
-            order_data.get('validated_items', [])
-        )
-        
-        # Update the response with final validation results
-        order_data['validated_items'] = final_validated_items
-        order_data['issues'].extend(additional_issues)
-        
-        return jsonify(order_data), 200
+        # Return the complete response
+        return jsonify(final_response), 200
         
     except json.JSONDecodeError as json_error:
         return jsonify({"error": "Invalid JSON response from AI model", "details": str(json_error)}), 500
@@ -175,5 +88,26 @@ def extract_order_details():
     except Exception as e:
         return jsonify({"error": "Failed to process request", "details": str(e)}), 500
 
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    """
+    Health check endpoint to verify the application is running.
+    """
+    return jsonify({"status": "healthy", "message": "Three-agent pipeline is operational"}), 200
+
 if __name__ == "__main__":
+    # Initialize database connection pool
+    print("Initializing database connection pool...")
+    initialize_connection_pool()
+    
+    # Initialize agents
+    print("Initializing agents...")
+    initialize_agents()
+    
+    # Start the Flask application
+    print("Starting Flask application...")
     app.run(debug=True, port=5001)
+    
+    # Cleanup on shutdown
+    print("Shutting down...")
+    close_connection_pool()
